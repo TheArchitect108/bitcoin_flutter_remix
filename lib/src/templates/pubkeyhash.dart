@@ -1,6 +1,6 @@
 import 'dart:typed_data';
-import '../utils/script.dart' as bscript;
-import '../utils/constants/op.dart';
+import 'package:bitcoin_flutter/src/utils/script.dart' as bscript;
+import 'package:bitcoin_flutter/src/utils/constants/op.dart';
 
 bool inputCheck(List<dynamic> chunks) {
   return chunks != null &&

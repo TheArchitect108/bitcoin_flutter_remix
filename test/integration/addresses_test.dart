@@ -1,11 +1,11 @@
-import '../../lib/src/models/networks.dart' as NETWORKS;
-import '../../lib/src/ecpair.dart' show ECPair;
-import '../../lib/src/payments/index.dart' show PaymentData;
-import '../../lib/src/payments/p2pkh.dart' show P2PKH, P2PKHData;
-import '../../lib/src/payments/p2wpkh.dart' show P2WPKH;
-import 'package:pointycastle/digests/sha256.dart';
 import 'dart:convert';
+
+import 'package:hex/hex.dart';
 import 'package:test/test.dart';
+
+import 'package:bitcoin_flutter/bitcoin_flutter.dart';
+import 'package:bitcoin_flutter/src/models/networks.dart' as NETWORKS;
+
 
 NETWORKS.NetworkType litecoin = new NETWORKS.NetworkType(
     messagePrefix: '\x19Litecoin Signed Message:\n',
@@ -19,76 +19,155 @@ rng(int number) {
 }
 
 main() {
-  group('bitcoinjs-lib (addresses)', () {
-    test('can generate a random address', () {
-      final keyPair = ECPair.makeRandom(rng: rng);
-      final address =
-          new P2PKH(data: new PaymentData(pubkey: keyPair.publicKey))
-              .data
-              .address;
-      expect(address, '1F5VhMHukdnUES9kfXqzPzMeF1GPHKiF64');
+  group('Address', () {
+
+    group('validateAddress', () {
+
+      test('base58 addresses and valid network', () {
+        expect(
+            Address.validateAddress(
+                'mhv6wtF2xzEqMNd3TbXx9TjLLo6mp2MUuT', NETWORKS.testnet),
+            true);
+        expect(Address.validateAddress('1K6kARGhcX9nJpJeirgcYdGAgUsXD59nHZ'),
+            true);
+        // P2SH
+        expect(Address.validateAddress('3L1YkZjdeNSqaZcNKZFXQfyokx3zVYm7r6'),
+            true);
+      });
+
+      test('base58 addresses and invalid network', () {
+        expect(
+            Address.validateAddress(
+                'mhv6wtF2xzEqMNd3TbXx9TjLLo6mp2MUuT', NETWORKS.bitcoin),
+            false);
+        expect(
+            Address.validateAddress(
+                '1K6kARGhcX9nJpJeirgcYdGAgUsXD59nHZ', NETWORKS.testnet),
+            false);
+      });
+
+      test('bech32 addresses and valid network', () {
+        expect(
+            Address.validateAddress(
+                'tb1qgmp0h7lvexdxx9y05pmdukx09xcteu9sx2h4ya', NETWORKS.testnet),
+            true);
+        expect(
+            Address.validateAddress(
+                'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4'),
+            true);
+        // expect(Address.validateAddress('tb1qqqqqp399et2xygdj5xreqhjjvcmzhxw4aywxecjdzew6hylgvsesrxh6hy'), true); TODO
+      });
+
+      test('bech32 addresses and invalid network', () {
+        expect(
+            Address.validateAddress(
+                'tb1qgmp0h7lvexdxx9y05pmdukx09xcteu9sx2h4ya'),
+            false);
+        expect(
+            Address.validateAddress(
+                'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4', NETWORKS.testnet),
+            false);
+      });
+
+      test('invalid addresses', () {
+        expect(Address.validateAddress('3333333casca'), false);
+      });
+
+      test('wrong size base58 address', () {
+
+        expect(
+          Address.validateAddress('12D2adLM3UKy4Z4giRbReR6gjWx1w6Dz'),
+          false,
+          reason: "P2PKH too short"
+        );
+
+        expect(
+          Address.validateAddress('1QXEx2ZQ9mEdvMSaVKHznFv6iZq2LQbDz8'),
+          false,
+          reason: "P2PKH too long"
+        );
+
+        expect(
+          Address.validateAddress('TTazDDREDxxh1mPyGySut6H98h4UKPG6'),
+          false,
+          reason: "P2SH too short"
+        );
+
+        expect(
+          Address.validateAddress('9tT9KH26AxgN8j9uTpKdwUkK6LFcSKp4FpF'),
+          false,
+          reason: "P2SH too long"
+        );
+
+      });
+
+      test('wrong size bech32 addresses', () {
+
+        // 31 bytes
+        expect(
+            Address.validateAddress(
+                'bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpqy20t'
+            ),
+            false,
+            reason: "P2WSH too short"
+        );
+
+        // 33 bytes
+        expect(
+            Address.validateAddress(
+                'bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq88p3kr'
+            ),
+            false,
+            reason: "P2WSH too long"
+        );
+
+      });
+
     });
-    test('can generate an address from a SHA256 hash', () {
-      final hash = new SHA256Digest()
-          .process(utf8.encode('correct horse battery staple'));
-      final keyPair = ECPair.fromPrivateKey(hash);
-      final address =
-          new P2PKH(data: new PaymentData(pubkey: keyPair.publicKey))
-              .data
-              .address;
-      expect(address, '1C7zdTfnkzmr13HfA2vNm5SJYRK6nEKyq8');
+
+    group('addressToOutputScript', () {
+
+      expectScript(address, expectedScript) {
+        final actual = Address.addressToOutputScript(address);
+        expect(HEX.encode(actual), expectedScript);
+      }
+
+      test('returns p2sh scripts', () {
+
+        expectP2SH(address, expectedHash) => expectScript(
+            address, "a914" + expectedHash + "87"
+        );
+
+        expectP2SH(
+            "31h1vYVSYuKP6AhS86fbRdMw9XHieotbST",
+            "0000000000000000000000000000000000000000"
+        );
+        expectP2SH(
+            "3R2cuenjG5nFubqX9Wzuukdin2YfBbQ6Kw",
+            "ffffffffffffffffffffffffffffffffffffffff"
+        );
+
+      });
+
+      test('returns p2wsh scripts', () {
+
+        expectP2WSH(address, expectedHash) => expectScript(
+            address, "0020" + expectedHash
+        );
+
+        expectP2WSH(
+            "bc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqthqst8",
+            "0000000000000000000000000000000000000000000000000000000000000000"
+        );
+
+        expectP2WSH(
+            "bc1qlllllllllllllllllllllllllllllllllllllllllllllllllllsffrpzs",
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+
+      });
+
     });
-    test('can import an address via WIF', () {
-      final keyPair = ECPair.fromWIF(
-          'Kxr9tQED9H44gCmp6HAdmemAzU3n84H3dGkuWTKvE23JgHMW8gct');
-      final address =
-          new P2PKH(data: new PaymentData(pubkey: keyPair.publicKey))
-              .data
-              .address;
-      expect(address, '19AAjaTUbRjQCMuVczepkoPswiZRhjtg31');
-    });
-    test('can generate a Testnet address', () {
-      final testnet = NETWORKS.testnet;
-      final keyPair = ECPair.makeRandom(network: testnet, rng: rng);
-      final wif = keyPair.toWIF();
-      final address = new P2PKH(
-              data: new PaymentData(pubkey: keyPair.publicKey),
-              network: testnet)
-          .data
-          .address;
-      expect(address, 'mubSzQNtZfDj1YdNP6pNDuZy6zs6GDn61L');
-      expect(wif, 'cRgnQe9MUu1JznntrLaoQpB476M8PURvXVQB5R2eqms5tXnzNsrr');
-    });
-    test('can generate a Litecoin address', () {
-      final keyPair = ECPair.makeRandom(network: litecoin, rng: rng);
-      final wif = keyPair.toWIF();
-      final address = new P2PKH(
-              data: new PaymentData(pubkey: keyPair.publicKey),
-              network: litecoin)
-          .data
-          .address;
-      expect(address, 'LZJSxZbjqJ2XVEquqfqHg1RQTDdfST5PTn');
-      expect(wif, 'T7A4PUSgTDHecBxW1ZiYFrDNRih2o7M8Gf9xpoCgudPF9gDiNvuS');
-    });
-    test('can generate a SegWit address', () {
-      final keyPair = ECPair.fromWIF(
-          'KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU73sVHnoWn');
-      final address =
-          new P2WPKH(data: new PaymentData(pubkey: keyPair.publicKey))
-              .data
-              .address;
-      expect(address, 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4');
-    });
-    test('can generate a SegWit testnet address', () {
-      final testnet = NETWORKS.testnet;
-      final keyPair = ECPair.fromWIF(
-          'cPaJYBMDLjQp5gSUHnBfhX4Rgj95ekBS6oBttwQLw3qfsKKcDfuB');
-      final address = new P2WPKH(
-              data: new PaymentData(pubkey: keyPair.publicKey),
-              network: testnet)
-          .data
-          .address;
-      expect(address, 'tb1qgmp0h7lvexdxx9y05pmdukx09xcteu9sx2h4ya');
-    });
+
   });
 }

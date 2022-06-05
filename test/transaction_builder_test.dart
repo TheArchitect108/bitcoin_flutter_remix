@@ -1,442 +1,539 @@
-import 'package:test/test.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:hex/hex.dart';
-import '../lib/src/models/networks.dart';
-import '../lib/src/ecpair.dart';
-import '../lib/src/transaction.dart';
-import '../lib/src/address.dart';
-import '../lib/src/transaction_builder.dart';
-import '../lib/src/utils/script.dart' as bscript;
-import '../lib/src/payments/index.dart' show PaymentData;
-import '../lib/src/payments/p2pkh.dart';
 
-final NETWORKS = {'bitcoin': bitcoin, 'testnet': testnet};
+import 'package:hex/hex.dart';
+import 'package:test/test.dart';
+
+import 'package:bitcoin_flutter/src/utils/constants/op.dart';
+import 'package:bitcoin_flutter/src/models/networks.dart';
+import 'package:bitcoin_flutter/src/ecpair.dart';
+import 'package:bitcoin_flutter/src/transaction.dart';
+import 'package:bitcoin_flutter/src/address.dart';
+import 'package:bitcoin_flutter/src/transaction_builder.dart';
+import 'package:bitcoin_flutter/src/utils/script.dart' as bscript;
+import 'package:bitcoin_flutter/src/payments/index.dart' show PaymentData;
+import 'package:bitcoin_flutter/src/payments/p2pkh.dart';
+
+final networks = {'bitcoin': bitcoin, 'testnet': testnet};
 
 constructSign(f, TransactionBuilder txb) {
-  final network = NETWORKS[f['network']];
+
+  final network = networks[f['network']];
   final inputs = f['inputs'] as List<dynamic>;
+
   for (var i = 0; i < inputs.length; i++) {
     if (inputs[i]['signs'] == null) continue;
-    (inputs[i]['signs'] as List<dynamic>).forEach((sign) {
+    for (final sign in inputs[i]['signs']) {
       ECPair keyPair = ECPair.fromWIF(sign['keyPair'], network: network);
       txb.sign(
           vin: i,
           keyPair: keyPair,
           witnessValue: sign['value'],
-          hashType: sign['hashType']);
-    });
+          witnessScript: compileWitnessScriptFromInput(inputs[i]),
+          hashType: sign['hashType']
+      );
+    }
   }
+
   return txb;
+
 }
 
-TransactionBuilder construct(f, [bool dontSign]) {
-  final network = NETWORKS[f['network']];
-  final txb = new TransactionBuilder(network: network);
+TransactionBuilder construct(f, [bool dontSign = false]) {
+
+  final network = networks[f['network']];
+  final txb = TransactionBuilder(network: network);
+
   if (f['version'] != null) txb.setVersion(f['version']);
-  (f['inputs'] as List<dynamic>).forEach((input) {
-    var prevTx;
+
+  for (final dynamic input in f['inputs']) {
+
+    dynamic prevTx;
+
     if (input['txRaw'] != null) {
+
       final constructed = construct(input['txRaw']);
-      if (input['txRaw']['incomplete'])
-        prevTx = constructed.buildIncomplete();
-      else
-        prevTx = constructed.build();
+      prevTx = input['txRaw']['incomplete']
+        ? constructed.buildIncomplete()
+        : constructed.build();
+
     } else if (input['txHex'] != null) {
       prevTx = Transaction.fromHex(input['txHex']);
     } else {
       prevTx = input['txId'];
     }
-    var prevTxScript;
+
+    Uint8List prevTxScript;
     if (input['prevTxScript'] != null) {
       prevTxScript = bscript.fromASM(input['prevTxScript']);
     }
+
     txb.addInput(prevTx, input['vout'], input['sequence'], prevTxScript);
-  });
-  (f['outputs'] as List<dynamic>).forEach((output) {
-    if (output['address'] != null) {
-      txb.addOutput(output['address'], output['value']);
-    } else {
-      txb.addOutput(bscript.fromASM(output['script']), output['value']);
-    }
-  });
-  if (dontSign != null && dontSign) return txb;
-  return constructSign(f, txb);
+
+  }
+
+  for (final dynamic output in f['outputs']) {
+    txb.addOutput(
+      output['address'] ?? bscript.fromASM(output['script']),
+      output['value']
+    );
+  }
+
+  return dontSign ? txb : constructSign(f, txb);
+
+}
+
+Uint8List compileWitnessScriptFromInput(dynamic input) {
+  final witnessScriptASM = input['witnessScript'];
+  return witnessScriptASM == null
+    ? null : bscript.fromASM(witnessScriptASM);
 }
 
 main() {
+
   final fixtures = json.decode(
-      new File('test/fixtures/transaction_builder.json')
-          .readAsStringSync(encoding: utf8));
-  group('TransactionBuilder', () {
-    final keyPair = ECPair.fromPrivateKey(HEX.decode(
-        '0000000000000000000000000000000000000000000000000000000000000001'));
-    final scripts = [
-      '1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH',
-      '1cMh228HTCiwS8ZsaakH8A8wze1JR5ZsP'
-    ].map((x) => Address.addressToOutputScript(x));
-    final txHash = HEX.decode(
-        '0e7cea811c0be9f73c0aca591034396e7264473fc25c1ca45195d7417b36cbe2');
-    group('fromTransaction', () {
-      (fixtures['valid']['build'] as List<dynamic>).forEach((f) {
-        test('returns TransactionBuilder, with ${f['description']}', () {
-          final network = NETWORKS[f['network'] ?? 'bitcoin'];
+      File('test/fixtures/transaction_builder.json')
+      .readAsStringSync(encoding: utf8)
+  );
+
+  final keyPair = ECPair.fromPrivateKey(
+      HEX.decode('0000000000000000000000000000000000000000000000000000000000000001')
+      as Uint8List
+  );
+
+  final scripts = [
+    '1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH',
+    '1cMh228HTCiwS8ZsaakH8A8wze1JR5ZsP'
+  ].map((x) => Address.addressToOutputScript(x));
+
+  final txHash = HEX.decode(
+      '0e7cea811c0be9f73c0aca591034396e7264473fc25c1ca45195d7417b36cbe2'
+  );
+
+  group('TransactionBuilder.fromTransaction', () {
+
+    for (final f in fixtures['valid']['build']) {
+      test('returns TransactionBuilder, with ${f['description']}', () {
+        final network = networks[f['network'] ?? 'bitcoin'];
+        final tx = Transaction.fromHex(f['txHex']);
+        final txb = TransactionBuilder.fromTransaction(tx, network);
+        final txAfter =
+            f['incomplete'] != null ? txb.buildIncomplete() : txb.build();
+        expect(txAfter.toHex(), f['txHex']);
+        expect(txb.network, network);
+      });
+    }
+
+    (fixtures['valid']['fromTransaction'] as List<dynamic>).forEach((f) {
+      test('returns TransactionBuilder, with ${f['description']}', () {
+        final tx = Transaction();
+        f['inputs'] as List<dynamic>
+          ..forEach((input) {
+            final txHash2 = Uint8List.fromList(
+                HEX.decode(input['txId']).reversed.toList());
+            tx.addInput(txHash2, input['vout'], null,
+                bscript.fromASM(input['scriptSig']));
+          });
+        f['outputs'] as List<dynamic>
+          ..forEach((output) {
+            tx.addOutput(bscript.fromASM(output['script']), output['value']);
+          });
+
+        final txb = TransactionBuilder.fromTransaction(tx);
+        final txAfter = f['incomplete'] ? txb.buildIncomplete() : txb.build();
+
+        for (var i = 0; i < txAfter.ins.length; i++) {
+          test(bscript.toASM(txAfter.ins[i].script),
+              f['inputs'][i]['scriptSigAfter']);
+        }
+        for (var i = 0; i < txAfter.outs.length; i++) {
+          test(bscript.toASM(txAfter.outs[i].script),
+              f['outputs'][i]['script']);
+        }
+      });
+    });
+
+    fixtures['invalid']['fromTransaction'] as List
+      ..forEach((f) {
+        test('throws ${f['exception']}', () {
           final tx = Transaction.fromHex(f['txHex']);
-          final txb = TransactionBuilder.fromTransaction(tx, network);
-          final txAfter =
-              f['incomplete'] != null ? txb.buildIncomplete() : txb.build();
-          expect(txAfter.toHex(), f['txHex']);
-          expect(txb.network, network);
-        });
-      });
-      (fixtures['valid']['fromTransaction'] as List<dynamic>).forEach((f) {
-        test('returns TransactionBuilder, with ${f['description']}', () {
-          final tx = new Transaction();
-          f['inputs'] as List<dynamic>
-            ..forEach((input) {
-              final txHash2 = Uint8List.fromList(
-                  HEX.decode(input['txId']).reversed.toList());
-              tx.addInput(txHash2, input['vout'], null,
-                  bscript.fromASM(input['scriptSig']));
-            });
-          f['outputs'] as List<dynamic>
-            ..forEach((output) {
-              tx.addOutput(bscript.fromASM(output['script']), output['value']);
-            });
-
-          final txb = TransactionBuilder.fromTransaction(tx);
-          final txAfter = f['incomplete'] ? txb.buildIncomplete() : txb.build();
-
-          for (var i = 0; i < txAfter.ins.length; i++) {
-            test(bscript.toASM(txAfter.ins[i].script),
-                f['inputs'][i]['scriptSigAfter']);
-          }
-          for (var i = 0; i < txAfter.outs.length; i++) {
-            test(bscript.toASM(txAfter.outs[i].script),
-                f['outputs'][i]['script']);
+          try {
+            expect(TransactionBuilder.fromTransaction(tx), isArgumentError);
+          } catch (err) {
+            expect((err as ArgumentError).message, f['exception']);
           }
         });
       });
-      fixtures['invalid']['fromTransaction'] as List
-        ..forEach((f) {
+
+  });
+
+  group('TransactionBuilder.addInput', () {
+
+    TransactionBuilder txb;
+    setUp(() {
+      txb = TransactionBuilder();
+    });
+
+    test('accepts a txHash, index [and sequence number]', () {
+      final vin = txb.addInput(txHash, 1, 54);
+      expect(vin, 0);
+      final txIn = txb.tx.ins[0];
+      expect(txIn.hash, txHash);
+      expect(txIn.index, 1);
+      expect(txIn.sequence, 54);
+      expect(txb.inputs[0].prevOutScript, null);
+    });
+
+    test('accepts a txHash, index [, sequence number and scriptPubKey]', () {
+      final vin = txb.addInput(txHash, 1, 54, scripts.elementAt(1));
+      expect(vin, 0);
+      final txIn = txb.tx.ins[0];
+      expect(txIn.hash, txHash);
+      expect(txIn.index, 1);
+      expect(txIn.sequence, 54);
+      expect(txb.inputs[0].prevOutScript, scripts.elementAt(1));
+    });
+
+    test('accepts a prevTx, index [and sequence number]', () {
+      final prevTx = Transaction();
+      prevTx.addOutput(scripts.elementAt(0), 0);
+      prevTx.addOutput(scripts.elementAt(1), 1);
+
+      final vin = txb.addInput(prevTx, 1, 54);
+      expect(vin, 0);
+
+      final txIn = txb.tx.ins[0];
+      expect(txIn.hash, prevTx.getHash());
+      expect(txIn.index, 1);
+      expect(txIn.sequence, 54);
+      expect(txb.inputs[0].prevOutScript, scripts.elementAt(1));
+    });
+
+    test('returns the input index', () {
+      expect(txb.addInput(txHash, 0), 0);
+      expect(txb.addInput(txHash, 1), 1);
+    });
+
+    test(
+        'throws if SIGHASH_ALL has been used to sign any existing scriptSigs',
+        () {
+      txb.addInput(txHash, 0);
+      txb.addOutput(scripts.elementAt(0), 1000);
+      txb.sign(vin: 0, keyPair: keyPair);
+      try {
+        expect(txb.addInput(txHash, 0), isArgumentError);
+      } catch (err) {
+        expect((err as ArgumentError).message,
+            'No, this would invalidate signatures');
+      }
+    });
+
+  });
+
+  group('TransactionBuilder.addOutput', () {
+
+    TransactionBuilder txb;
+    setUp(() {
+      txb = TransactionBuilder();
+    });
+
+    test('accepts an address string and value', () {
+      final address =
+          P2PKH(data: PaymentData(pubkey: keyPair.publicKey))
+              .data
+              .address;
+      final vout = txb.addOutput(address, 1000);
+      expect(vout, 0);
+      final txout = txb.tx.outs[0];
+      expect(txout.script, scripts.elementAt(0));
+      expect(txout.value, 1000);
+    });
+
+    test('accepts a ScriptPubKey and value', () {
+      final vout = txb.addOutput(scripts.elementAt(0), 1000);
+      expect(vout, 0);
+      final txout = txb.tx.outs[0];
+      expect(txout.script, scripts.elementAt(0));
+      expect(txout.value, 1000);
+    });
+
+    test('throws if address is of the wrong network', () {
+      try {
+        expect(txb.addOutput('2NGHjvjw83pcVFgMcA7QvSMh2c246rxLVz9', 1000),
+            isArgumentError);
+      } catch (err) {
+        expect((err as ArgumentError).message,
+            'Invalid version or Network mismatch');
+      }
+    });
+
+    test('add second output after signed first input with SIGHASH_NONE', () {
+      txb.addInput(txHash, 0);
+      txb.addOutput(scripts.elementAt(0), 2000);
+      txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_NONE);
+      expect(txb.addOutput(scripts.elementAt(1), 9000), 1);
+    });
+
+    test('add first output after signed first input with SIGHASH_NONE', () {
+      txb.addInput(txHash, 0);
+      txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_NONE);
+      expect(txb.addOutput(scripts.elementAt(0), 2000), 0);
+    });
+
+    test('add second output after signed first input with SIGHASH_SINGLE',
+        () {
+      txb.addInput(txHash, 0);
+      txb.addOutput(scripts.elementAt(0), 2000);
+      txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_SINGLE);
+      expect(txb.addOutput(scripts.elementAt(1), 9000), 1);
+    });
+
+    test('add first output after signed first input with SIGHASH_SINGLE', () {
+      txb.addInput(txHash, 0);
+      txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_SINGLE);
+      try {
+        expect(txb.addOutput(scripts.elementAt(0), 2000), isArgumentError);
+      } catch (err) {
+        expect((err as ArgumentError).message,
+            'No, this would invalidate signatures');
+      }
+    });
+
+    test(
+        'throws if SIGHASH_ALL has been used to sign any existing scriptSigs',
+        () {
+      txb.addInput(txHash, 0);
+      txb.addOutput(scripts.elementAt(0), 2000);
+      txb.sign(vin: 0, keyPair: keyPair);
+      try {
+        expect(txb.addOutput(scripts.elementAt(1), 9000), isArgumentError);
+      } catch (err) {
+        expect((err as ArgumentError).message,
+            'No, this would invalidate signatures');
+      }
+    });
+
+  });
+
+  group('TransactionBuilder.addNullOutput', () {
+
+    TransactionBuilder txb;
+    String data;
+    String data2;
+
+    setUp(() {
+      txb = TransactionBuilder();
+      data = 'Hey this is a random string without coins. Extended to 80 characters............';
+      data2 = 'And this is another string.';
+    });
+
+    expectOutputScript(input, Uint8List expectPushData) {
+      final opReturn = OPS['OP_RETURN'];
+      final expectScript = bscript.compile([opReturn, expectPushData]);
+      final vout = txb.addNullOutput(input);
+      expect(vout, 0);
+      final txout = txb.tx.outs[0];
+      expect(txout.script, expectScript);
+      expect(txout.value, 0);
+    }
+
+    test('accepts a string', () {
+      final rawData = Uint8List.fromList(utf8.encode(data));
+      expectOutputScript(data, rawData);
+    });
+
+    test('accepts Uint8List data', () {
+      final rawData = Uint8List.fromList(List.generate(80, (i) => i));
+      expectOutputScript(rawData, rawData);
+    });
+
+    test('throws if too much data is provided', () {
+      try {
+        expect(
+            txb.addNullOutput(
+                'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Morbi sagittis placerat.'),
+            isArgumentError);
+      } catch (err) {
+        expect((err as ArgumentError).message,
+            'Too much data, max OP_RETURN size is 80');
+      }
+    });
+
+    test('add second output after signed first input with SIGHASH_NONE', () {
+      txb.addInput(txHash, 0);
+      txb.addNullOutput(data);
+      txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_NONE);
+      expect(txb.addNullOutput(data2), 1);
+    });
+
+    test('add first output after signed first input with SIGHASH_NONE', () {
+      txb.addInput(txHash, 0);
+      txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_NONE);
+      expect(txb.addNullOutput(data), 0);
+    });
+
+    test('add second output after signed first input with SIGHASH_SINGLE',
+        () {
+      txb.addInput(txHash, 0);
+      txb.addNullOutput(data);
+      txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_SINGLE);
+      expect(txb.addNullOutput(data2), 1);
+    });
+
+    test('add first output after signed first input with SIGHASH_SINGLE', () {
+      txb.addInput(txHash, 0);
+      txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_SINGLE);
+      try {
+        expect(txb.addNullOutput(data), isArgumentError);
+      } catch (err) {
+        expect((err as ArgumentError).message,
+            'No, this would invalidate signatures');
+      }
+    });
+
+    test(
+        'throws if SIGHASH_ALL has been used to sign any existing scriptSigs',
+        () {
+      txb.addInput(txHash, 0);
+      txb.addNullOutput(data);
+      txb.sign(vin: 0, keyPair: keyPair);
+      try {
+        expect(txb.addNullOutput(data2), isArgumentError);
+      } catch (err) {
+        expect((err as ArgumentError).message,
+            'No, this would invalidate signatures');
+      }
+    });
+
+  });
+
+  group('TransactionBuilder.setLockTime', () {
+    test('throws if if there exist any scriptSigs', () {
+      final txb = TransactionBuilder();
+      txb.addInput(txHash, 0);
+      txb.addOutput(scripts.elementAt(0), 100);
+      txb.sign(vin: 0, keyPair: keyPair);
+      try {
+        expect(txb.setLockTime(65535), isArgumentError);
+      } catch (err) {
+        expect(
+          (err as ArgumentError).message,
+            'Can\'t set lock time; this would invalidate signatures'
+        );
+      }
+    });
+  });
+
+  group('TransactionBuilder.sign', () {
+
+    // Valid tests are implicit in the invalid fixtures that test that signing
+    // an already signed input is invalid
+    for (final dynamic f in fixtures['invalid']['sign']) {
+      test('throws ${f['exception']} ${f['description'] ?? ''}', () {
+
+        final txb = construct(f, true);
+        final inputs = f['inputs'] as List;
+
+        for (var i = 0; i < inputs.length; i++) {
+
+          final witnessScript = compileWitnessScriptFromInput(inputs[i]);
+
+          for (final dynamic sign in inputs[i]['signs']) {
+
+            final keyPairNetwork =
+              networks[sign['network'] ?? f['network']];
+            final keyPair2 =
+              ECPair.fromWIF(sign['keyPair'], network: keyPairNetwork);
+
+            Matcher match = sign['throws'] == null || !sign['throws']
+              ? returnsNormally
+              : throwsA(
+                allOf(
+                  isArgumentError,
+                  predicate((ArgumentError err) => err.message == f['exception'])
+                )
+              );
+
+            expect(
+              () => txb.sign(
+                  vin: i,
+                  keyPair: keyPair2,
+                  hashType: sign['hashType'],
+                  witnessValue: sign['value'],
+                  witnessScript: witnessScript
+              ), match
+            );
+
+          }
+        }
+
+      });
+    }
+
+  });
+
+  group('TransactionBuilder.build', () {
+
+    for (final f in fixtures['valid']['build']) {
+      test('builds ${f['description']}', () {
+        final txb = construct(f);
+        final tx = f['incomplete'] != null
+          ? txb.buildIncomplete() : txb.build();
+        expect(tx.toHex(), f['txHex']);
+      });
+    }
+
+    for (final f in fixtures['invalid']['build']) {
+
+      group('for ${f['description'] ?? f['exception']}', () {
+
+        test('throws ${f['exception']}', () {
+          try {
+            TransactionBuilder txb;
+            if (f['txHex'] != null) {
+              txb = TransactionBuilder.fromTransaction(
+                Transaction.fromHex(f['txHex']));
+            } else {
+              txb = construct(f);
+            }
+            expect(txb.build(), isArgumentError);
+          } catch (err) {
+            expect((err as ArgumentError).message, f['exception']);
+          }
+        });
+
+        // if throws on incomplete too, enforce that
+        if (f['incomplete'] != null && f['incomplete']) {
           test('throws ${f['exception']}', () {
-            final tx = Transaction.fromHex(f['txHex']);
             try {
-              expect(TransactionBuilder.fromTransaction(tx), isArgumentError);
+              TransactionBuilder txb;
+              if (f['txHex'] != null) {
+                txb = TransactionBuilder.fromTransaction(
+                  Transaction.fromHex(f['txHex']));
+              } else {
+                txb = construct(f);
+              }
+              expect(txb.buildIncomplete(), isArgumentError);
             } catch (err) {
               expect((err as ArgumentError).message, f['exception']);
             }
           });
-        });
-    });
-    group('addInput', () {
-      TransactionBuilder txb;
-      setUp(() {
-        txb = new TransactionBuilder();
-      });
-      test('accepts a txHash, index [and sequence number]', () {
-        final vin = txb.addInput(txHash, 1, 54);
-        expect(vin, 0);
-        final txIn = txb.tx.ins[0];
-        expect(txIn.hash, txHash);
-        expect(txIn.index, 1);
-        expect(txIn.sequence, 54);
-        expect(txb.inputs[0].prevOutScript, null);
-      });
-      test('accepts a txHash, index [, sequence number and scriptPubKey]', () {
-        final vin = txb.addInput(txHash, 1, 54, scripts.elementAt(1));
-        expect(vin, 0);
-        final txIn = txb.tx.ins[0];
-        expect(txIn.hash, txHash);
-        expect(txIn.index, 1);
-        expect(txIn.sequence, 54);
-        expect(txb.inputs[0].prevOutScript, scripts.elementAt(1));
-      });
-      test('accepts a prevTx, index [and sequence number]', () {
-        final prevTx = new Transaction();
-        prevTx.addOutput(scripts.elementAt(0), 0);
-        prevTx.addOutput(scripts.elementAt(1), 1);
-
-        final vin = txb.addInput(prevTx, 1, 54);
-        expect(vin, 0);
-
-        final txIn = txb.tx.ins[0];
-        expect(txIn.hash, prevTx.getHash());
-        expect(txIn.index, 1);
-        expect(txIn.sequence, 54);
-        expect(txb.inputs[0].prevOutScript, scripts.elementAt(1));
-      });
-      test('returns the input index', () {
-        expect(txb.addInput(txHash, 0), 0);
-        expect(txb.addInput(txHash, 1), 1);
-      });
-      test(
-          'throws if SIGHASH_ALL has been used to sign any existing scriptSigs',
-          () {
-        txb.addInput(txHash, 0);
-        txb.addOutput(scripts.elementAt(0), 1000);
-        txb.sign(vin: 0, keyPair: keyPair);
-        try {
-          expect(txb.addInput(txHash, 0), isArgumentError);
-        } catch (err) {
-          expect((err as ArgumentError).message,
-              'No, this would invalidate signatures');
-        }
-      });
-    });
-    group('addOutput', () {
-      TransactionBuilder txb;
-      setUp(() {
-        txb = new TransactionBuilder();
-      });
-      test('accepts an address string and value', () {
-        final address =
-            new P2PKH(data: new PaymentData(pubkey: keyPair.publicKey))
-                .data
-                .address;
-        final vout = txb.addOutput(address, 1000);
-        expect(vout, 0);
-        final txout = txb.tx.outs[0];
-        expect(txout.script, scripts.elementAt(0));
-        expect(txout.value, 1000);
-      });
-      
-      test('accepts a ScriptPubKey and value', () {
-        final vout = txb.addOutput(scripts.elementAt(0), 1000);
-        expect(vout, 0);
-        final txout = txb.tx.outs[0];
-        expect(txout.script, scripts.elementAt(0));
-        expect(txout.value, 1000);
-      });
-      test('throws if address is of the wrong network', () {
-        try {
-          expect(txb.addOutput('2NGHjvjw83pcVFgMcA7QvSMh2c246rxLVz9', 1000),
-              isArgumentError);
-        } catch (err) {
-          expect((err as ArgumentError).message,
-              'Invalid version or Network mismatch');
-        }
-      });
-      test('add second output after signed first input with SIGHASH_NONE', () {
-        txb.addInput(txHash, 0);
-        txb.addOutput(scripts.elementAt(0), 2000);
-        txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_NONE);
-        expect(txb.addOutput(scripts.elementAt(1), 9000), 1);
-      });
-      test('add first output after signed first input with SIGHASH_NONE', () {
-        txb.addInput(txHash, 0);
-        txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_NONE);
-        expect(txb.addOutput(scripts.elementAt(0), 2000), 0);
-      });
-      test('add second output after signed first input with SIGHASH_SINGLE',
-          () {
-        txb.addInput(txHash, 0);
-        txb.addOutput(scripts.elementAt(0), 2000);
-        txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_SINGLE);
-        expect(txb.addOutput(scripts.elementAt(1), 9000), 1);
-      });
-      test('add first output after signed first input with SIGHASH_SINGLE', () {
-        txb.addInput(txHash, 0);
-        txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_SINGLE);
-        try {
-          expect(txb.addOutput(scripts.elementAt(0), 2000), isArgumentError);
-        } catch (err) {
-          expect((err as ArgumentError).message,
-              'No, this would invalidate signatures');
-        }
-      });
-      test(
-          'throws if SIGHASH_ALL has been used to sign any existing scriptSigs',
-          () {
-        txb.addInput(txHash, 0);
-        txb.addOutput(scripts.elementAt(0), 2000);
-        txb.sign(vin: 0, keyPair: keyPair);
-        try {
-          expect(txb.addOutput(scripts.elementAt(1), 9000), isArgumentError);
-        } catch (err) {
-          expect((err as ArgumentError).message,
-              'No, this would invalidate signatures');
-        }
-      });
-    });
-    group('setLockTime', () {
-      test('throws if if there exist any scriptSigs', () {
-        final txb = new TransactionBuilder();
-        txb.addInput(txHash, 0);
-        txb.addOutput(scripts.elementAt(0), 100);
-        txb.sign(vin: 0, keyPair: keyPair);
-        try {
-          expect(txb.setLockTime(65535), isArgumentError);
-        } catch (err) {
-          expect((err as ArgumentError).message,
-              'No, this would invalidate signatures');
-        }
-      });
-    });
-      group('addOutputData', () {
-      TransactionBuilder txb;
-      String data;
-      String data2;
-      setUp(() {
-        txb = new TransactionBuilder();
-        data = 'Hey this is a random string without Bitcoins.';
-        data2 = 'And this is another string.';
-      });
-      test('accepts a ScriptPubKey', () {
-        final vout = txb.addOutputData(scripts.elementAt(0));
-        expect(vout, 0);
-        final txout = txb.tx.outs[0];
-        expect(txout.script, scripts.elementAt(0));
-        expect(txout.value, 0);
-      });
-      test('throws if too much data is provided', () {
-        try {
-          expect(txb.addOutputData('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
-              isArgumentError);
-        } catch (err) {
-          expect((err as ArgumentError).message,
-              'Too much data embedded, max OP_RETURN size is 100');
-        }
-      });
-      test('add second output after signed first input with SIGHASH_NONE', () {
-        txb.addInput(txHash, 0);
-        txb.addOutputData(data);
-        txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_NONE);
-        expect(txb.addOutputData(data2), 1);
-      });
-      test('add first output after signed first input with SIGHASH_NONE', () {
-        txb.addInput(txHash, 0);
-        txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_NONE);
-        expect(txb.addOutputData(data), 0);
-      });
-      test('add second output after signed first input with SIGHASH_SINGLE',
-              () {
-            txb.addInput(txHash, 0);
-            txb.addOutputData(data);
-            txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_SINGLE);
-            expect(txb.addOutputData(data2), 1);
-          });
-      test('add first output after signed first input with SIGHASH_SINGLE', () {
-        txb.addInput(txHash, 0);
-        txb.sign(vin: 0, keyPair: keyPair, hashType: SIGHASH_SINGLE);
-        try {
-          expect(txb.addOutputData(data), isArgumentError);
-        } catch (err) {
-          expect((err as ArgumentError).message,
-              'No, this would invalidate signatures');
-        }
-      });
-      test(
-          'throws if SIGHASH_ALL has been used to sign any existing scriptSigs',
-              () {
-            txb.addInput(txHash, 0);
-            txb.addOutputData(data);
-            txb.sign(vin: 0, keyPair: keyPair);
-            try {
-              expect(txb.addOutputData(data2), isArgumentError);
-            } catch (err) {
-              expect((err as ArgumentError).message,
-                  'No, this would invalidate signatures');
-            }
-          });
-    });
-    group('sign', () {
-      fixtures['invalid']['sign'] as List<dynamic>
-        ..forEach((f) {
-          test(
-              'throws ${f['exception']} ${f['description'] != null ? f['description'] : ''}',
-              () {
-            final txb = construct(f, true);
-            var threw = false;
-            final inputs = f['inputs'] as List;
-            for (var i = 0; i < inputs.length; i++) {
-              inputs[i]['signs'] as List<dynamic>
-                ..forEach((sign) {
-                  final keyPairNetwork =
-                      NETWORKS[sign['network'] ?? f['network']];
-                  final keyPair2 =
-                      ECPair.fromWIF(sign['keyPair'], network: keyPairNetwork);
-                  if (sign['throws'] != null && sign['throws']) {
-                    try {
-                      expect(
-                          txb.sign(
-                              vin: i,
-                              keyPair: keyPair2,
-                              hashType: sign['hashType']),
-                          isArgumentError);
-                    } catch (err) {
-                      expect((err as ArgumentError).message, f['exception']);
-                    }
-                    threw = true;
-                  } else {
-                    txb.sign(
-                        vin: i, keyPair: keyPair2, hashType: sign['hashType']);
-                  }
-                });
-            }
-            expect(threw, true);
-          });
-        });
-    });
-    group('build', () {
-      fixtures['valid']['build'] as List<dynamic>
-        ..forEach((f) {
-          test('builds ${f['description']}', () {
-            final txb = construct(f);
-            final tx =
-                f['incomplete'] != null ? txb.buildIncomplete() : txb.build();
-
-            expect(tx.toHex(), f['txHex']);
-          });
-        });
-      fixtures['invalid']['build'] as List<dynamic>
-        ..forEach((f) {
-          group('for ${f['description'] ?? f['exception']}', () {
-            test('throws ${f['exception']}', () {
-              try {
-                TransactionBuilder txb;
-                if (f['txHex'] != null) {
-                  txb = TransactionBuilder.fromTransaction(
-                      Transaction.fromHex(f['txHex']));
-                } else {
-                  txb = construct(f);
-                }
-                expect(txb.build(), isArgumentError);
-              } catch (err) {
-                expect((err as ArgumentError).message, f['exception']);
-              }
-            });
-            // if throws on incomplete too, enforce that
-            if (f['incomplete'] != null && f['incomplete']) {
-              test('throws ${f['exception']}', () {
-                try {
-                  TransactionBuilder txb;
-                  if (f['txHex'] != null) {
-                    txb = TransactionBuilder.fromTransaction(
-                        Transaction.fromHex(f['txHex']));
-                  } else {
-                    txb = construct(f);
-                  }
-                  expect(txb.buildIncomplete(), isArgumentError);
-                } catch (err) {
-                  expect((err as ArgumentError).message, f['exception']);
-                }
-              });
+        } else {
+          test('does not throw if buildIncomplete', () {
+            TransactionBuilder txb;
+            if (f['txHex'] != null) {
+              txb = TransactionBuilder.fromTransaction(
+                Transaction.fromHex(f['txHex']));
             } else {
-              test('does not throw if buildIncomplete', () {
-                TransactionBuilder txb;
-                if (f['txHex'] != null) {
-                  txb = TransactionBuilder.fromTransaction(
-                      Transaction.fromHex(f['txHex']));
-                } else {
-                  txb = construct(f);
-                }
-                txb.buildIncomplete();
-              });
+              txb = construct(f);
             }
+            txb.buildIncomplete();
           });
-        });
-    });
+        }
+
+      });
+    }
+
   });
 }

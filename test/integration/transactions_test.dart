@@ -1,106 +1,212 @@
-import 'package:test/test.dart';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:hex/hex.dart';
-import '../../lib/src/ecpair.dart';
-import '../../lib/src/transaction_builder.dart';
-import '../../lib/src/models/networks.dart' as NETWORKS;
-import '../../lib/src/payments/p2wpkh.dart' show P2WPKH;
-import '../../lib/src/payments/index.dart' show PaymentData;
+import 'package:test/test.dart';
+
+import 'package:bitcoin_flutter/bitcoin_flutter.dart';
+import 'package:bitcoin_flutter/src/utils/script.dart' as bscript;
+
+
 
 main() {
-  group('bitcoinjs-lib (transactions)', () {
-    test('can create a 1-to-1 Transaction', () {
-      final alice = ECPair.fromWIF(
-          'L1uyy5qTuGrVXrmrsvHWHgVzW9kKdrp27wBC7Vs6nZDTF2BRUVwy');
-      final txb = new TransactionBuilder();
+  final fixtures = json.decode(new File('test/fixtures/transaction.json')
+      .readAsStringSync(encoding: utf8));
+  final valids = (fixtures['valid'] as List<dynamic>);
 
-      txb.setVersion(1);
-      txb.addInput(
-          '61d520ccb74288c96bc1a2b20ea1c0d5a704776dd0164a396efec3ea7040349d',
-          0); // Alice's previous transaction output, has 15000 satoshis
-      txb.addOutput('1cMh228HTCiwS8ZsaakH8A8wze1JR5ZsP', 12000);
-      // (in)15000 - (out)12000 = (fee)3000, this is the miner fee
+  group('Transaction', () {
+    group('fromBuffer/fromHex', () {
+      valids.forEach(importExport);
+      (fixtures['hashForSignature'] as List<dynamic>).forEach(importExport);
+      (fixtures['invalid']['fromBuffer'] as List<dynamic>).forEach((f) {
+        test('throws on ${f['exception']}', () {
+          try {
+            expect(Transaction.fromHex(f['hex']), isArgumentError);
+          } catch (err) {
+            expect((err as ArgumentError).message, f['exception']);
+          }
+        });
+      });
 
-      txb.sign(vin: 0, keyPair: alice);
-
-      // prepare for broadcast to the Bitcoin network, see 'can broadcast a Transaction' below
-      expect(txb.build().toHex(),
-          '01000000019d344070eac3fe6e394a16d06d7704a7d5c0a10eb2a2c16bc98842b7cc20d561000000006b48304502210088828c0bdfcdca68d8ae0caeb6ec62cd3fd5f9b2191848edae33feb533df35d302202e0beadd35e17e7f83a733f5277028a9b453d525553e3f5d2d7a7aa8010a81d60121029f50f51d63b345039a290c94bffd3180c99ed659ff6ea6b1242bca47eb93b59fffffffff01e02e0000000000001976a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac00000000');
+      test('.version should be interpreted as an int32le', () {
+        final txHex = 'ffffffff0000ffffffff';
+        final tx = Transaction.fromHex(txHex);
+        expect(-1, tx.version);
+      });
     });
 
-    test('can create an OP_RETURN Transaction', () {
-      final alice = ECPair.fromWIF(
-          'L1uyy5qTuGrVXrmrsvHWHgVzW9kKdrp27wBC7Vs6nZDTF2BRUVwy');
-      final txb = new TransactionBuilder();
-
-      txb.setVersion(1);
-      txb.addInput(
-          '61d520ccb74288c96bc1a2b20ea1c0d5a704776dd0164a396efec3ea7040349d',
-          0); // Alice's previous transaction output, has 15000 satoshis
-      txb.addOutputData('Hey this is a random string without Bitcoins');
-
-      txb.sign(vin: 0, keyPair: alice);
-
-      // prepare for broadcast to the Bitcoin network, see 'can broadcast a Transaction' below
-      expect(txb.build().toHex(),
-          '01000000019d344070eac3fe6e394a16d06d7704a7d5c0a10eb2a2c16bc98842b7cc20d561000000006a47304402200852194e22d2b5faf9db66407d769b13278708b77e55df5d9c8638367af4c0870220638083bdaf06d8147ad4bfaddb975a2a4a056cca806a717e956d334c01482b3a0121029f50f51d63b345039a290c94bffd3180c99ed659ff6ea6b1242bca47eb93b59fffffffff0100000000000000002e6a2c486579207468697320697320612072616e646f6d20737472696e6720776974686f757420426974636f696e7300000000');
+    group('toBuffer/toHex', () {
+      valids.forEach((f) {
+        test('exports ${f['description']} (${f['id']})', () {
+          Transaction actual = fromRaw(f['raw'], false);
+          expect(actual.toHex(), f['hex']);
+        });
+        if (f['whex'] != null && f['whex'] != '') {
+          test('exports ${f['description']} (${f['id']}) as witness', () {
+            Transaction actual = fromRaw(f['raw'], true);
+            expect(actual.toHex(), f['whex']);
+          });
+        }
+      });
     });
 
-    test('can create a 2-to-2 Transaction', () {
-      final alice = ECPair.fromWIF(
-          'L1Knwj9W3qK3qMKdTvmg3VfzUs3ij2LETTFhxza9LfD5dngnoLG1');
-      final bob = ECPair.fromWIF(
-          'KwcN2pT3wnRAurhy7qMczzbkpY5nXMW2ubh696UBc1bcwctTx26z');
-
-      final txb = new TransactionBuilder();
-      txb.setVersion(1);
-      txb.addInput(
-          'b5bb9d8014a0f9b1d61e21e796d78dccdf1352f23cd32812f4850b878ae4944c',
-          6); // Alice's previous transaction output, has 200000 satoshis
-      txb.addInput(
-          '7d865e959b2466918c9863afca942d0fb89d7c9ac0c99bafc3749504ded97730',
-          0); // Bob's previous transaction output, has 300000 satoshis
-      txb.addOutput('1CUNEBjYrCn2y1SdiUMohaKUi4wpP326Lb', 180000);
-      txb.addOutput('1JtK9CQw1syfWj1WtFMWomrYdV3W2tWBF9', 170000);
-      // (in)(200000 + 300000) - (out)(180000 + 170000) = (fee)150000, this is the miner fee
-
-      txb.sign(
-          vin: 1,
-          keyPair:
-              bob); // Bob signs his input, which was the second input (1th)
-      txb.sign(
-          vin: 0,
-          keyPair:
-              alice); // Alice signs her input, which was the first input (0th)
-
-      // prepare for broadcast to the Bitcoin network, see 'can broadcast a Transaction' below
-      expect(txb.build().toHex(),
-          '01000000024c94e48a870b85f41228d33cf25213dfcc8dd796e7211ed6b1f9a014809dbbb5060000006a473044022041450c258ce7cac7da97316bf2ea1ce66d88967c4df94f3e91f4c2a30f5d08cb02203674d516e6bb2b0afd084c3551614bd9cec3c2945231245e891b145f2d6951f0012103e05ce435e462ec503143305feb6c00e06a3ad52fbf939e85c65f3a765bb7baacffffffff3077d9de049574c3af9bc9c09a7c9db80f2d94caaf63988c9166249b955e867d000000006b483045022100aeb5f1332c79c446d3f906e4499b2e678500580a3f90329edf1ba502eec9402e022072c8b863f8c8d6c26f4c691ac9a6610aa4200edc697306648ee844cfbc089d7a012103df7940ee7cddd2f97763f67e1fb13488da3fbdd7f9c68ec5ef0864074745a289ffffffff0220bf0200000000001976a9147dd65592d0ab2fe0d0257d571abf032cd9db93dc88ac10980200000000001976a914c42e7ef92fdb603af844d064faad95db9bcdfd3d88ac00000000');
+    group('weight/virtualSize', () {
+      test('computes virtual size', () {
+        valids.forEach((f) {
+          final txHex =
+              (f['whex'] != null && f['whex'] != '') ? f['whex'] : f['hex'];
+          final transaction = Transaction.fromHex(txHex);
+          expect(transaction.virtualSize(), f['virtualSize']);
+        });
+      });
     });
 
-    test('can create (and broadcast via 3PBP) a Transaction, w/ a P2WPKH input',
-        () {
-      final alice = ECPair.fromWIF(
-          'cUNfunNKXNNJDvUvsjxz5tznMR6ob1g5K6oa4WGbegoQD3eqf4am',
-          network: NETWORKS.testnet);
-      final p2wpkh = new P2WPKH(
-              data: new PaymentData(pubkey: alice.publicKey),
-              network: NETWORKS.testnet)
-          .data;
-      final txb = new TransactionBuilder(network: NETWORKS.testnet);
-      txb.setVersion(1);
-      txb.addInput(
-          '53676626f5042d42e15313492ab7e708b87559dc0a8c74b7140057af51a2ed5b',
-          0,
-          null,
-          p2wpkh
-              .output); // Alice's previous transaction output, has 200000 satoshis
-      txb.addOutput('tb1qchsmnkk5c8wsjg8vxecmsntynpmkxme0yvh2yt', 1000000);
-      txb.addOutput('tb1qn40fftdp6z2lvzmsz4s0gyks3gq86y2e8svgap', 8995000);
-
-      txb.sign(vin: 0, keyPair: alice, witnessValue: 10000000);
-      // // prepare for broadcast to the Bitcoin network, see 'can broadcast a Transaction' below
-      expect(txb.build().toHex(),
-          '010000000001015beda251af570014b7748c0adc5975b808e7b72a491353e1422d04f5266667530000000000ffffffff0240420f0000000000160014c5e1b9dad4c1dd0920ec3671b84d649877636f2fb8408900000000001600149d5e94ada1d095f60b701560f412d08a007d11590247304402203c4670ff81d352924af311552e0379861268bebb2222eeb0e66b3cdd1d4345b60220585b57982d958208cdd52f4ead4ecb86cfa9ff7740c2f6933e77135f1cc4c58f012102f9f43a191c6031a5ffae27c5f9911218e78857923284ac1154abc2cc008544b200000000');
+    group('addInput', () {
+      var prevTxHash;
+      setUp(() {
+        prevTxHash = HEX.decode(
+            'ffffffff00ffff000000000000000000000000000000000000000000101010ff');
+      });
+      test('returns an index', () {
+        final tx = new Transaction();
+        expect(tx.addInput(prevTxHash, 0), 0);
+        expect(tx.addInput(prevTxHash, 0), 1);
+      });
+      test('defaults to empty script, and 0xffffffff SEQUENCE number', () {
+        final tx = new Transaction();
+        tx.addInput(prevTxHash, 0);
+        expect(tx.ins[0].script.length, 0);
+        expect(tx.ins[0].sequence, 0xffffffff);
+      });
+      (fixtures['invalid']['addInput'] as List<dynamic>).forEach((f) {
+        test('throws on ' + f['exception'], () {
+          final tx = new Transaction();
+          final hash = HEX.decode(f['hash']) as Uint8List;
+          try {
+            expect(tx.addInput(hash, f['index']), isArgumentError);
+          } catch (err) {
+            expect((err as ArgumentError).message, f['exception']);
+          }
+        });
+      });
     });
+
+    test('addOutput returns an index', () {
+      final tx = new Transaction();
+      expect(tx.addOutput(new Uint8List(0), 0), 0);
+      expect(tx.addOutput(new Uint8List(0), 0), 1);
+    });
+
+    group('getHash/getId', () {
+      verify(f) {
+        test('should return the id for ${f['id']} (${f['description']})', () {
+          final txHex =
+              (f['whex'] != null && f['whex'] != '') ? f['whex'] : f['hex'];
+          final tx = Transaction.fromHex(txHex);
+          expect(HEX.encode(tx.getHash()), f['hash']);
+          expect(tx.getId(), f['id']);
+        });
+      }
+
+      valids.forEach(verify);
+    });
+
+    group('isCoinbase', () {
+      verify(f) {
+        test(
+            'should return ${f['coinbase']} for ${f['id']} (${f['description']})',
+            () {
+          final tx = Transaction.fromHex(f['hex']);
+          expect(tx.isCoinbase(), f['coinbase']);
+        });
+      }
+
+      valids.forEach(verify);
+    });
+
+    group('hashForSignature', () {
+      (fixtures['hashForSignature'] as List<dynamic>).forEach((f) {
+        test(
+            'should return ${f['hash']} for ${f['description'] != null ? 'case "' + f['description'] + '"' : f['script']}',
+            () {
+          final tx = Transaction.fromHex(f['txHex']);
+          final script = bscript.fromASM(f['script']);
+          expect(
+              HEX.encode(tx.hashForSignature(f['inIndex'], script, f['type'])),
+              f['hash']);
+        });
+      });
+    });
+
+    group('hashForWitnessV0', () {
+
+      for (final f in fixtures['hashForWitnessV0']) {
+
+        final hash = f['hash'];
+        final description = f['description'];
+        final script = bscript.fromASM(f['script']);
+        final inIndex = f['inIndex'];
+        final type = f['type'];
+        final value = f['value'];
+        final tx = Transaction.fromHex(f['txHex']);
+
+        test('should return $hash for $description', () {
+          expect(
+              HEX.encode(tx.hashForWitnessV0(inIndex, script, value, type)),
+              hash
+          );
+        });
+
+      }
+
+    });
+
   });
+}
+
+importExport(dynamic f) {
+  final id = f['id'] ?? f['hash'];
+  final txHex = f['hex'] ?? f['txHex'];
+  test('imports ${f['description']} ($id)', () {
+    final actual = Transaction.fromHex(txHex);
+    expect(actual.toHex(), txHex);
+  });
+}
+
+Transaction fromRaw(raw, [isWitness]) {
+  final tx = new Transaction();
+  tx.version = raw['version'];
+  tx.locktime = raw['locktime'];
+
+  (raw['ins'] as List<dynamic>).asMap().forEach((indx, txIn) {
+    final txHash = HEX.decode(txIn['hash']) as Uint8List;
+    var scriptSig;
+
+    if (txIn['data'] != null) {
+      scriptSig = HEX.decode(txIn['data']);
+    } else if (txIn['script'] != null && txIn['script'] != '') {
+      scriptSig = bscript.fromASM(txIn['script']);
+    }
+    tx.addInput(txHash, txIn['index'], txIn['sequence'], scriptSig);
+
+    if (isWitness) {
+      var witness = (txIn['witness'] as List<dynamic>)
+          .map((e) => HEX.decode(e.toString()) as Uint8List)
+          .toList();
+      tx.setWitness(indx, witness);
+    }
+  });
+
+  (raw['outs'] as List<dynamic>).forEach((txOut) {
+    var script;
+    if (txOut['data'] != null) {
+      script = HEX.decode(txOut['data']);
+    } else if (txOut['script'] != null) {
+      script = bscript.fromASM(txOut['script']);
+    }
+    tx.addOutput(script, txOut['value']);
+  });
+
+  return tx;
 }

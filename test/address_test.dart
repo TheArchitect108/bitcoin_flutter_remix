@@ -1,6 +1,6 @@
 import 'package:test/test.dart';
-import '../lib/src/address.dart' show Address;
-import '../lib/src/models/networks.dart' as NETWORKS;
+import 'package:bitcoin_flutter/src/address.dart' show Address;
+import 'package:bitcoin_flutter/src/models/networks.dart' as NETWORKS;
 
 main() {
   group('Address', () {

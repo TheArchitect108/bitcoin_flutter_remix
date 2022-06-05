@@ -1,10 +1,12 @@
-import 'package:test/test.dart';
 import 'dart:io';
 import 'dart:convert';
-import 'package:hex/hex.dart';
 import 'dart:typed_data';
-import '../lib/src/utils/script.dart' as bscript;
-import '../lib/src/transaction.dart';
+
+import 'package:hex/hex.dart';
+import 'package:test/test.dart';
+
+import 'package:bitcoin_flutter/src/utils/script.dart' as bscript;
+import 'package:bitcoin_flutter/src/transaction.dart';
 
 main() {
   final fixtures = json.decode(new File('test/fixtures/transaction.json')

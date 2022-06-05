@@ -1,14 +1,15 @@
 // TODO: Put public facing types in this file.
 import 'dart:typed_data';
-import 'package:bitcoin_flutter/src/utils/magic_hash.dart';
-import 'package:hex/hex.dart';
-import 'package:bip32/bip32.dart' as bip32;
-import 'models/networks.dart';
-import 'payments/index.dart' show PaymentData;
-import 'payments/p2pkh.dart';
-import 'ecpair.dart';
 import 'package:meta/meta.dart';
-import 'dart:convert';
+import 'package:hex/hex.dart';
+
+import 'package:bitcoin_flutter/src/utils/magic_hash.dart';
+import 'package:bip32/bip32.dart' as bip32;
+import 'package:bitcoin_flutter/src/models/networks.dart';
+import 'package:bitcoin_flutter/src/payments/index.dart' show PaymentData;
+import 'package:bitcoin_flutter/src/payments/p2pkh.dart';
+import 'package:bitcoin_flutter/src/ecpair.dart';
+
 
 /// Checks if you are awesome. Spoiler: you are.
 class HDWallet {
@@ -26,6 +27,7 @@ class HDWallet {
     }
   }
 
+  Uint8List get pubKeyBytes => _bip32?.publicKey;
   String get pubKey => _bip32 != null ? HEX.encode(_bip32.publicKey) : null;
 
   String get base58Priv {

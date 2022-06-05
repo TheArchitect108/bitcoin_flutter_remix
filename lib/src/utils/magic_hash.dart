@@ -1,8 +1,8 @@
 import 'dart:typed_data';
 import 'dart:convert';
-import '../../src/crypto.dart';
+import 'package:bitcoin_flutter/src/crypto.dart';
 import 'varuint.dart';
-import '../../src/models/networks.dart';
+import 'package:bitcoin_flutter/src/models/networks.dart';
 
 Uint8List magicHash(String message, [NetworkType network]) {
   network = network ?? bitcoin;

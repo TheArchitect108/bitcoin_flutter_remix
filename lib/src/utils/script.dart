@@ -14,7 +14,7 @@ final OP_INT_BASE = OPS['OP_RESERVED'];
 final ZERO = Uint8List.fromList([0]);
 
 Uint8List compile(List<dynamic> chunks) {
-  final dynamic bufferSize = chunks.fold<int>(0, (int acc, chunk) {
+  final dynamic bufferSize = chunks.fold(0, (int acc, chunk) {
     if (chunk is int) return acc + 1;
     if (chunk.length == 1 && asMinimalOP(chunk) != null) {
       return acc + 1;
@@ -141,7 +141,7 @@ String toASM(List<dynamic> c) {
 }
 
 int asMinimalOP(Uint8List buffer) {
-  if (buffer.isEmpty) return OPS['OP_0'];
+  if (buffer.length == 0) return OPS['OP_0'];
   if (buffer.length != 1) return null;
   if (buffer[0] >= 1 && buffer[0] <= 16) return OP_INT_BASE + buffer[0];
   if (buffer[0] == 0x81) return OPS['OP_1NEGATE'];

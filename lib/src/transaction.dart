@@ -279,7 +279,7 @@ class Transaction {
     return virtualSize();
   }
 
-  Uint8List toBuffer([Uint8List buffer, int initialOffset]) {
+  Uint8List toBuffer([Uint8List buffer, int initialOffset = 0]) {
     return _toBuffer(buffer, initialOffset, true);
   }
 
